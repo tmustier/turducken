@@ -1,4 +1,4 @@
-# cursed-tui
+# turducken
 
 Immortalized proof of the **Cursed Stack**:
 
@@ -14,7 +14,7 @@ In short: **Pi in wterm in Carbonyl**.
 This repo is a small wrapper around a pinned upstream snapshot of
 [`vercel-labs/wterm`](https://github.com/vercel-labs/wterm).
 
-It contains two things:
+It contains three things:
 
 1. the cursed-stack `wterm` changes:
    - `patches/wterm-cursed-stack.patch`
@@ -22,6 +22,8 @@ It contains two things:
 2. a launcher that brings up synchronized tmux sessions for:
    - the **backend server**
    - the **Carbonyl viewer**
+3. an interactive bridge that lets you drive both layers together:
+   - `scripts/use-the-curse.sh`
 
 The launcher clones upstream `wterm` into `.workdir/`, applies the patch,
 drops in `server.tmux.ts`, builds it, and starts the nested stack.
@@ -45,7 +47,7 @@ while the visible cursed shell becomes:
 
 ## Architecture
 
-There are two tmux layers:
+There are three useful layers:
 
 ### Outer tmux socket
 Managed by `scripts/launch-cursed-stack.sh`.
@@ -62,18 +64,34 @@ It owns the actual long-lived Pi session:
 
 - `cursed-pi`
 
+### Interactive bridge session
+Managed by `scripts/use-the-curse.sh`.
+
+It creates one session:
+
+- `the-curse`
+
+Inside `the-curse`:
+
+- **window 1, pane 0** attaches to `cursed-carbonyl`
+- **window 1, pane 1** attaches to `cursed-pi`
+- pane sync is turned on
+- pane 0 is zoomed so Carbonyl stays front-and-center while input can still mirror down into the inner Pi pane
+
 So the stack looks like this:
 
 ```text
 terminal
-└── outer tmux session: cursed-carbonyl
-    └── Carbonyl
-        └── wterm frontend
-            └── websocket
-                └── outer tmux session: cursed-backend
-                    └── patched wterm server.tmux.ts
-                        └── inner tmux session: cursed-pi
-                            └── pi
+└── outer tmux session: the-curse
+    ├── pane 0 -> outer tmux session: cursed-carbonyl
+    │   └── Carbonyl
+    │       └── wterm frontend
+    │           └── websocket
+    │               └── outer tmux session: cursed-backend
+    │                   └── patched wterm server.tmux.ts
+    │                       └── inner tmux session: cursed-pi
+    │                           └── pi
+    └── pane 1 -> inner tmux session: cursed-pi
 ```
 
 ## Prerequisites
@@ -99,6 +117,7 @@ From this repo root:
 
 ```bash
 ./scripts/launch-cursed-stack.sh
+./scripts/use-the-curse.sh
 ```
 
 That will:
@@ -111,6 +130,7 @@ That will:
 6. start the backend tmux session
 7. wait for `/api/tmux/status`
 8. start the Carbonyl tmux session
+9. create the `the-curse` bridge session that connects Carbonyl and the inner Pi pane together
 
 If you only want the backend and do **not** want Carbonyl launched yet:
 
@@ -123,11 +143,12 @@ If you only want the backend and do **not** want Carbonyl launched yet:
 By default the launcher uses:
 
 - server URL: `http://127.0.0.1:3001`
-- outer tmux socket: `${TMPDIR:-/tmp}/cursed-tui-sockets/launcher.sock`
-- inner tmux socket: `${TMPDIR:-/tmp}/cursed-tui-sockets/backend.sock`
+- outer tmux socket: `/tmp/turducken-sockets/launcher.sock`
+- inner tmux socket: `/tmp/turducken-sockets/backend.sock`
 - backend server session: `cursed-backend`
 - Carbonyl session: `cursed-carbonyl`
 - inner Pi session: `cursed-pi`
+- interactive bridge session: `the-curse`
 - Pi launch command: `pi`
 - Pi working directory: `$HOME`
 
@@ -138,57 +159,94 @@ You can override the defaults when launching.
 ### Choose a different Pi command
 
 ```bash
-CURSED_TUI_PI_CMD='pi --continue' ./scripts/launch-cursed-stack.sh
+TURDUCKEN_PI_CMD='pi --continue' ./scripts/launch-cursed-stack.sh
 ```
 
 ### Choose a different working directory for the inner Pi session
 
 ```bash
-CURSED_TUI_PI_CWD="$HOME/projects/some-repo" ./scripts/launch-cursed-stack.sh
+TURDUCKEN_PI_CWD="$HOME/projects/some-repo" ./scripts/launch-cursed-stack.sh
 ```
 
 ### Choose a different port
 
 ```bash
-CURSED_TUI_PORT=3005 ./scripts/launch-cursed-stack.sh
+TURDUCKEN_PORT=3005 ./scripts/launch-cursed-stack.sh
 ```
 
 ### Reuse a custom workdir for the upstream clone
 
 ```bash
-CURSED_TUI_WORKDIR="$HOME/.cache/cursed-tui" ./scripts/launch-cursed-stack.sh
+TURDUCKEN_WORKDIR="$HOME/.cache/turducken" ./scripts/launch-cursed-stack.sh
 ```
+
+### Use a different socket directory
+
+```bash
+TURDUCKEN_TMUX_DIR=/tmp/my-turducken ./scripts/launch-cursed-stack.sh
+```
+
+## The interactive bridge
+
+This is the part that makes the curse actually usable.
+
+Run:
+
+```bash
+./scripts/use-the-curse.sh
+```
+
+Then attach with:
+
+```bash
+tmux -S /tmp/turducken-sockets/launcher.sock attach -t the-curse
+```
+
+Inside that bridge session:
+
+- pane 0 shows Carbonyl rendering `wterm`
+- pane 1 is the real inner `cursed-pi` tmux session
+- synchronize-panes is on
+- pane 0 is zoomed
+
+So when you type into the bridge, you get the visible cursed front-end and the direct inner Pi path at the same time.
 
 ## Monitoring commands
 
 ### List the outer launcher sessions
 
 ```bash
-tmux -S "${TMPDIR:-/tmp}/cursed-tui-sockets/launcher.sock" list-sessions
+tmux -S "/tmp/turducken-sockets/launcher.sock" list-sessions
 ```
 
 ### Attach the backend server session
 
 ```bash
-tmux -S "${TMPDIR:-/tmp}/cursed-tui-sockets/launcher.sock" attach -t cursed-backend
+tmux -S "/tmp/turducken-sockets/launcher.sock" attach -t cursed-backend
 ```
 
 ### Attach the Carbonyl viewer session
 
 ```bash
-tmux -S "${TMPDIR:-/tmp}/cursed-tui-sockets/launcher.sock" attach -t cursed-carbonyl
+tmux -S "/tmp/turducken-sockets/launcher.sock" attach -t cursed-carbonyl
+```
+
+### Attach the bridge session
+
+```bash
+tmux -S "/tmp/turducken-sockets/launcher.sock" attach -t the-curse
 ```
 
 ### Attach the inner Pi session directly
 
 ```bash
-tmux -S "${TMPDIR:-/tmp}/cursed-tui-sockets/backend.sock" attach -t cursed-pi
+tmux -S "/tmp/turducken-sockets/backend.sock" attach -t cursed-pi
 ```
 
 ### Capture the inner Pi session once
 
 ```bash
-tmux -S "${TMPDIR:-/tmp}/cursed-tui-sockets/backend.sock" capture-pane -p -J -t cursed-pi:0.0 -S -200
+tmux -S "/tmp/turducken-sockets/backend.sock" capture-pane -p -J -t cursed-pi:0.0 -S -200
 ```
 
 ### Check backend status
@@ -201,8 +259,10 @@ curl -fsS http://127.0.0.1:3001/api/tmux/status
 
 - `patches/wterm-cursed-stack.patch` — tracked diffs against upstream `wterm`
 - `overlay/examples/local/server.tmux.ts` — the tmux-backed server entrypoint
-- `scripts/prepare-wterm.sh` — clones/apply patch/builds pinned upstream `wterm`
+- `scripts/prepare-wterm.sh` — clones/applies patch/builds pinned upstream `wterm`
 - `scripts/launch-cursed-stack.sh` — launches synchronized tmux sessions for backend + Carbonyl
+- `scripts/retry-attach.sh` — tiny helper that keeps retrying a nested tmux attach until the target is ready
+- `scripts/use-the-curse.sh` — creates the bridge session that combines Carbonyl + inner Pi
 
 ## Licensing note
 
